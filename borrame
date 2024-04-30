@@ -1,0 +1,44 @@
+#!/bin/bash
+
+
+# 1- inicializamos la tabla filter
+iptables -F
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT ACCEPT
+
+# 2- permitir todas la conexiones de dentro de la red interna
+iptables -A FORWARD -i enp0s9 -p ALL -j ACCEPT
+iptables -A FORWARD -i enp0s10 -j ACCEPT
+iptables -A FORWARD -p tcp --dport 80 -j ACCEPT
+iptables -A FORWARD -p tcp --dport 443 -j ACCEPT
+iptables -A FORWARD -p tcp --dport 22 -j ACCEPT
+
+# 3- bucle local y ping
+iptables -A INPUT -i lo -d 127.0.0.1 -p ALL -j ACCEPT
+iptables -A INPUT -i enp0s9 -d 192.168.56.20 -p icmp --icmp-type 8 -j ACCEPT
+iptables -A INPUT -i enp0s10 -d 192.168.57.20 -p icmp --icmp-type 8 -j ACCEPT
+
+# 4- Permite respuestas de extranet a peticiones de intranet(conectarse a INTERNET)
+iptables -A INPUT -i enp0s3 -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -i enp0s3 -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -i enp0s8 -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -i enp0s8 -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# 5- Redirige peticiones HTTP de host a máquinas adecuadas
+sudo iptables -A FORWARD -i enp0s9 -o enp0s3 -m state --state RELATED,ESTABLISHED -j ACCEPT
+sudo iptables -A FORWARD -i enp0s3 -o enp0s9 -j ACCEPT
+sudo iptables -A FORWARD -i enp0s10 -o enp0s3 -m state --state RELATED,ESTABLISHED -j ACCEPT
+sudo iptables -A FORWARD -i enp0s3 -o enp0s10 -j ACCEPT
+sudo iptables -t nat -A POSTROUTING -o enp0s3 -j MASQUERADE
+
+# 5- configuramos la nat para el sw y el ssh, primero para indicar donde enviar el paquete,
+# y despues para que tranfome la ip de debian2/debian5 a la de debian1
+iptables -t nat -A PREROUTING -i enp0s8 -p tcp --dport 80 -j DNAT --to 192.168.56.10
+iptables -t nat -A PREROUTING -i enp0s8 -p tcp --dport 22 -j DNAT --to 192.168.58.10
+iptables -t nat -A PREROUTING -i enp0s8 -p tcp --dport 433 -j DNAT --to 192.168.58.10
+iptables -t nat -A POSTROUTING -o enp0s8 -j SNAT --to 192.168.59.20
+iptables -t nat -A POSTROUTING -o enp0s3 -j SNAT --to 192.168.59.20
+
+# lo hacemos permanente en la maquina
+bash -c 'iptables-save > /etc/iptables/rules.v4'
